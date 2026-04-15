@@ -1,6 +1,6 @@
 """
-文本格式批量转换器
-批量将文本文件从任意编码转换为 UTF-8 (no BOM)
+Text Encoding Batch Converter
+Batch converts text files from any encoding to UTF-8 (no BOM)
 """
 
 import os
@@ -10,6 +10,7 @@ import glob
 import queue
 import shutil
 import subprocess
+import locale
 import threading
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
@@ -18,22 +19,217 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ============================================================
+# i18n - Internationalization
+# ============================================================
+
+class I18n:
+    """Simple i18n system based on system locale."""
+
+    TRANSLATIONS = {
+        "en": {
+            # Window
+            "app_title": "Text Encoding Converter",
+            # Labels
+            "path_label": "Path:",
+            "browse": "Browse...",
+            "ext_label": "Extensions:",
+            "add": "Add",
+            "remove": "Remove",
+            "log_label": "Log:",
+            # Buttons
+            "convert": "Convert",
+            "pause": "Pause",
+            "resume": "Resume",
+            "stop": "Stop",
+            "exit": "Exit",
+            # Dialogs
+            "select_path": "Select Processing Path",
+            "add_ext_title": "Add Extension",
+            "add_ext_label": "Enter extension (e.g. .json):",
+            "confirm": "OK",
+            "error": "Error",
+            "no_path": "Please select a valid processing path.",
+            "no_ext": "Please add at least one file extension.",
+            "exit_confirm": "Confirm Exit",
+            "exit_msg": "Conversion is in progress. Are you sure you want to exit?\nUnfinished files will be stopped.",
+            # Completion
+            "done_title": "Processing Complete",
+            "done_title_warn": "Processing Complete (with errors)",
+            "done_msg": "Processing complete!\n\n"
+                       "Files processed: {processed}\n"
+                       "Converted successfully: {success}\n"
+                       "Skipped (already UTF-8): {skip}\n"
+                       "Failed: {fail}",
+            # Dependency
+            "dep_missing": "Missing Dependency",
+            "dep_msg": "The 'chardet' library is required for encoding detection.\nInstall it now?",
+            "dep_ok": "Installation Successful",
+            "dep_ok_msg": "'chardet' has been installed. The program will now continue.",
+            "dep_fail": "Installation Failed",
+            "dep_fail_msg": "Failed to auto-install 'chardet'. Please run manually:\n"
+                           "pip install chardet\n\nError: {error}",
+            # Status
+            "ready": "Ready",
+            "scanning": "Scanning...",
+            "processing_parallel": "Processing (parallel)...",
+            "processing_single": "Processing (single thread)...",
+            # Log messages
+            "log_scanning": "Scanning directory: {dir}",
+            "log_no_files": "No matching files found.",
+            "log_found": "Found {count} files",
+            "log_processing": "Processing: {file}",
+            "log_empty": "  {file}: Empty file, skipped",
+            "log_detect": "  Detected encoding: {enc}",
+            "log_use": "  Using encoding: {enc}",
+            "log_bom": "  UTF-8 BOM detected, removing BOM",
+            "log_utf8": "  Already UTF-8 (no BOM), skipped",
+            "log_write_fail": "  Write failed: {err}",
+            "log_verify_fail": "  Verification failed, rolling back: {err}",
+            "log_fallback": "  All encoding attempts failed, falling back to latin-1",
+            "log_success": "  {file}: Converted -> UTF-8 (no BOM)",
+            "log_error": "  {file}: Processing error: {err}",
+            "log_paused": "Paused",
+            "log_resuming": "Resumed",
+            "log_stopping": "Stopping...",
+            "log_cleaning": "Cleaning up...",
+            "log_done": "Done: processed {processed}, success {success}",
+            "log_done_fail": ", failed {fail}",
+            "log_done_skip": ", skipped {skip}",
+            # Conversion results
+            "res_stopped": "Stopped",
+            "res_empty": "Empty file",
+            "res_utf8": "Already UTF-8",
+            "res_success": "Success",
+            "res_write_fail": "Write failed: {err}",
+            "res_verify_fail": "Verification failed, rolled back: {err}",
+        },
+        "zh": {
+            # Window
+            "app_title": "文本格式批量转换器",
+            # Labels
+            "path_label": "处理路径:",
+            "browse": "浏览...",
+            "ext_label": "文件后缀:",
+            "add": "添加",
+            "remove": "删除",
+            "log_label": "处理日志:",
+            # Buttons
+            "convert": "转换",
+            "pause": "暂停",
+            "resume": "恢复",
+            "stop": "停止",
+            "exit": "退出",
+            # Dialogs
+            "select_path": "选择处理路径",
+            "add_ext_title": "添加后缀",
+            "add_ext_label": "输入后缀（如 .json）:",
+            "confirm": "确定",
+            "error": "错误",
+            "no_path": "请选择有效的处理路径",
+            "no_ext": "请至少添加一个文件后缀",
+            "exit_confirm": "确认退出",
+            "exit_msg": "转换正在进行中，确定要退出吗？\n未完成的文件将被停止。",
+            # Completion
+            "done_title": "处理完成",
+            "done_title_warn": "处理完成（有失败）",
+            "done_msg": "处理完成！\n\n"
+                       "共处理: {processed} 个文件\n"
+                       "转换成功: {success} 个\n"
+                       "跳过（已是 UTF-8）: {skip} 个\n"
+                       "失败: {fail} 个",
+            # Dependency
+            "dep_missing": "缺少依赖",
+            "dep_msg": "需要安装 'chardet' 库用于编码检测。\n是否现在自动安装？",
+            "dep_ok": "安装成功",
+            "dep_ok_msg": "'chardet' 已安装，程序将继续运行。",
+            "dep_fail": "安装失败",
+            "dep_fail_msg": "自动安装 'chardet' 失败，请手动运行：\n"
+                           "pip install chardet\n\n"
+                           "错误信息：{error}",
+            # Status
+            "ready": "就绪",
+            "scanning": "正在扫描...",
+            "processing_parallel": "并行处理中...",
+            "processing_single": "单线程处理中...",
+            # Log messages
+            "log_scanning": "扫描目录: {dir}",
+            "log_no_files": "未找到匹配的文件",
+            "log_found": "找到 {count} 个文件",
+            "log_processing": "处理: {file}",
+            "log_empty": "  {file}: 空文件，跳过",
+            "log_detect": "  检测编码: {enc}",
+            "log_use": "  使用编码: {enc}",
+            "log_bom": "  检测到 UTF-8 BOM，移除 BOM",
+            "log_utf8": "  已经是 UTF-8 (no BOM)，跳过",
+            "log_write_fail": "  写入失败: {err}",
+            "log_verify_fail": "  验证失败，回滚原始内容: {err}",
+            "log_fallback": "  所有编码尝试失败，使用 latin-1 兜底",
+            "log_success": "  {file}: 转换成功 -> UTF-8 (no BOM)",
+            "log_error": "  {file}: 处理异常: {err}",
+            "log_paused": "已暂停",
+            "log_resuming": "已恢复",
+            "log_stopping": "正在停止...",
+            "log_cleaning": "正在清理...",
+            "log_done": "完成：处理 {processed} 个，成功 {success} 个",
+            "log_done_fail": "，失败 {fail} 个",
+            "log_done_skip": "，跳过 {skip} 个",
+            # Conversion results
+            "res_stopped": "已停止",
+            "res_empty": "空文件",
+            "res_utf8": "已是 UTF-8",
+            "res_success": "成功",
+            "res_write_fail": "写入失败: {err}",
+            "res_verify_fail": "验证失败，已回滚: {err}",
+        },
+    }
+
+    def __init__(self):
+        self.lang = self._detect_language()
+
+    @staticmethod
+    def _detect_language():
+        """Detect system language. Returns 'zh' for Chinese, 'en' for others."""
+        try:
+            # Windows: locale.getdefaultlocale() returns ('zh_CN', 'cp1252') etc.
+            lang_tag = locale.getdefaultlocale()[0] or ""
+            lang_tag = lang_tag.lower()
+        except Exception:
+            lang_tag = ""
+
+        if "zh" in lang_tag:
+            return "zh"
+        return "en"
+
+    def t(self, key, **kwargs):
+        """Translate a key. Supports {placeholder} formatting."""
+        text = self.TRANSLATIONS.get(self.lang, {}).get(key, key)
+        if kwargs:
+            try:
+                text = text.format(**kwargs)
+            except KeyError:
+                pass
+        return text
+
+
+# Global i18n instance
+_ = I18n()
+
+
+# ============================================================
 # 依赖检查
 # ============================================================
 
 def ensure_chardet():
-    """确保 chardet 已安装，未安装时自动尝试 pip install"""
+    """Ensure chardet is installed, auto-install if needed."""
     try:
         import chardet
         return True
     except ImportError:
         pass
 
-    # 尝试自动安装
     result = messagebox.askyesno(
-        "缺少依赖",
-        "需要安装 'chardet' 库用于编码检测。\n"
-        "是否现在自动安装？"
+        _("dep_missing"),
+        _("dep_msg")
     )
     if not result:
         return False
@@ -44,14 +240,12 @@ def ensure_chardet():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        messagebox.showinfo("安装成功", "'chardet' 已安装，程序将继续运行。")
+        messagebox.showinfo(_("dep_ok"), _("dep_ok_msg"))
         return True
     except Exception as e:
         messagebox.showerror(
-            "安装失败",
-            f"自动安装 'chardet' 失败，请手动运行：\n"
-            f"pip install chardet\n\n"
-            f"错误信息：{e}"
+            _("dep_fail"),
+            _("dep_fail_msg", error=str(e))
         )
         return False
 
@@ -113,43 +307,36 @@ def is_garbled(text):
 
 def convert_single_file(file_path, log_queue, stop_event, pause_event):
     """
-    转换单个文件。
-    返回 (file_path, success, message)
+    Convert a single file.
+    Returns (file_path, success, message_key, message_kwargs)
     """
-    # 检查停止
     if stop_event.is_set():
-        return file_path, False, "已停止"
+        return file_path, False, "res_stopped", {}
 
-    # 等待暂停
     pause_event.wait()
 
     filename = os.path.basename(file_path)
-    log_queue.put(("info", f"处理: {filename}"))
+    log_queue.put(("info", _("log_processing", file=filename)))
 
     try:
-        # 1. 读取原始字节
         with open(file_path, "rb") as f:
             raw = f.read()
 
         if len(raw) == 0:
-            log_queue.put(("info", f"  {filename}: 空文件，跳过"))
-            return file_path, True, "空文件"
+            log_queue.put(("info", _("log_empty", file=filename)))
+            return file_path, True, "res_empty", {}
 
-        # 2. 检测编码
         detected_encoding, _ = detect_encoding(file_path)
-        log_queue.put(("info", f"  检测编码: {detected_encoding}"))
+        log_queue.put(("info", _("log_detect", enc=detected_encoding)))
 
-        # 3. 尝试解码原始内容
         text = None
         used_encoding = None
 
-        # 优先使用 chardet 结果
         if detected_encoding:
             success, text = try_decode(raw, detected_encoding)
             if success and not is_garbled(text):
                 used_encoding = detected_encoding
 
-        # 如果 chardet 结果不可靠，遍历候选编码
         if text is None:
             for enc in CANDIDATE_ENCODINGS:
                 success, text = try_decode(raw, enc)
@@ -158,57 +345,50 @@ def convert_single_file(file_path, log_queue, stop_event, pause_event):
                     break
 
         if text is None:
-            # 最后尝试 latin-1（永不失败）
             text = raw.decode("latin-1")
             used_encoding = "latin-1"
-            log_queue.put(("warn", f"  所有编码尝试失败，使用 latin-1 兜底"))
+            log_queue.put(("warn", _("log_fallback")))
 
-        log_queue.put(("info", f"  使用编码: {used_encoding}"))
+        log_queue.put(("info", _("log_use", enc=used_encoding)))
 
-        # 4. 如果已经是 UTF-8 无 BOM，检查是否需要转换
         if used_encoding in ("utf-8",):
-            # 检查是否有 BOM
             if raw.startswith(b"\xef\xbb\xbf"):
-                log_queue.put(("info", f"  检测到 UTF-8 BOM，移除 BOM"))
+                log_queue.put(("info", _("log_bom")))
             else:
-                log_queue.put(("info", f"  已经是 UTF-8 (no BOM)，跳过"))
-                return file_path, True, "已是 UTF-8"
+                log_queue.put(("info", _("log_utf8")))
+                return file_path, True, "res_utf8", {}
 
-        # 5. 写回 UTF-8 (no BOM)
-        # 备份内容到内存（用于回滚）
         original_raw = raw
 
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(text)
         except IOError as e:
-            log_queue.put(("error", f"  写入失败: {e}"))
-            return file_path, False, f"写入失败: {e}"
+            log_queue.put(("error", _("log_write_fail", err=str(e))))
+            return file_path, False, "res_write_fail", {"err": str(e)}
 
-        # 6. 验证：重新读取
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 verify_text = f.read()
             if is_garbled(verify_text):
-                raise ValueError("验证时发现乱码")
+                raise ValueError("Garbled text on verify")
             if verify_text != text:
-                raise ValueError("验证时内容不一致")
+                raise ValueError("Content mismatch on verify")
         except Exception as e:
-            # 回滚
-            log_queue.put(("warn", f"  验证失败，回滚原始内容: {e}"))
+            log_queue.put(("warn", _("log_verify_fail", err=str(e))))
             try:
                 with open(file_path, "wb") as f:
                     f.write(original_raw)
             except IOError:
                 pass
-            return file_path, False, f"验证失败，已回滚: {e}"
+            return file_path, False, "res_verify_fail", {"err": str(e)}
 
-        log_queue.put(("info", f"  {filename}: 转换成功 -> UTF-8 (no BOM)"))
-        return file_path, True, "成功"
+        log_queue.put(("info", _("log_success", file=filename)))
+        return file_path, True, "res_success", {}
 
     except Exception as e:
-        log_queue.put(("error", f"  {filename}: 处理异常: {e}"))
-        return file_path, False, str(e)
+        log_queue.put(("error", _("log_error", file=filename, err=str(e))))
+        return file_path, False, "res_error", {"err": str(e)}
 
 
 # ============================================================
@@ -216,7 +396,7 @@ def convert_single_file(file_path, log_queue, stop_event, pause_event):
 # ============================================================
 
 def scan_files(directory, extensions):
-    """递归扫描目录下指定后缀的文件"""
+    """Recursively scan directory for files with given extensions."""
     files = []
     for root, dirs, filenames in os.walk(directory):
         for fn in filenames:
@@ -231,18 +411,18 @@ def scan_files(directory, extensions):
 # ============================================================
 
 class ConverterController:
-    """文件转换控制器，管理线程与状态"""
+    """File conversion controller, manages threads and state."""
 
     def __init__(self, log_queue):
         self.log_queue = log_queue
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
-        self.pause_event.set()  # 初始为非暂停状态
+        self.pause_event.set()
         self.worker_thread = None
         self.is_running = False
 
     def start(self, directory, extensions):
-        """启动转换线程"""
+        """Start conversion thread."""
         if self.is_running:
             return
         self.stop_event.clear()
@@ -256,42 +436,42 @@ class ConverterController:
         self.worker_thread.start()
 
     def pause(self):
-        """暂停转换"""
+        """Pause conversion."""
         self.pause_event.clear()
 
     def resume(self):
-        """恢复转换"""
+        """Resume conversion."""
         self.pause_event.set()
 
     def stop(self):
-        """停止转换"""
+        """Stop conversion."""
         self.stop_event.set()
-        self.pause_event.set()  # 确保不被阻塞
+        self.pause_event.set()
 
     def _run(self, directory, extensions):
-        """工作线程入口"""
-        self.log_queue.put(("info", f"扫描目录: {directory}"))
+        """Worker thread entry point."""
+        self.log_queue.put(("info", _("log_scanning", dir=directory)))
 
         files = scan_files(directory, extensions)
         total = len(files)
 
         if total == 0:
-            self.log_queue.put(("warn", "未找到匹配的文件"))
+            self.log_queue.put(("warn", _("log_no_files")))
             self.log_queue.put(("done", 0, 0, 0))
             self.is_running = False
             return
 
-        self.log_queue.put(("info", f"找到 {total} 个文件"))
+        self.log_queue.put(("info", _("log_found", count=total)))
 
         success_count = 0
         fail_count = 0
         skip_count = 0
 
-        # 并发策略
         use_threads = total >= 10
         max_workers = min(total, 4) if use_threads else 1
 
-        self.log_queue.put(("info", f"{'并行' if use_threads else '单线程'} 处理中..."))
+        mode_key = "processing_parallel" if use_threads else "processing_single"
+        self.log_queue.put(("info", _(mode_key)))
 
         if use_threads:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -309,28 +489,26 @@ class ConverterController:
                 for future in as_completed(futures):
                     if self.stop_event.is_set():
                         break
-                    fp, success, msg = future.result()
+                    fp, success, msg_key, msg_kwargs = future.result()
                     if success:
-                        if msg == "已是 UTF-8" or msg == "空文件":
+                        if msg_key in ("res_utf8", "res_empty"):
                             skip_count += 1
                         else:
                             success_count += 1
                     else:
                         fail_count += 1
         else:
-            # 单线程
             for fp in files:
                 if self.stop_event.is_set():
                     break
-                # 暂停等待
                 self.pause_event.wait()
 
-                fp, success, msg = convert_single_file(
+                fp, success, msg_key, msg_kwargs = convert_single_file(
                     fp, self.log_queue,
                     self.stop_event, self.pause_event,
                 )
                 if success:
-                    if msg == "已是 UTF-8" or msg == "空文件":
+                    if msg_key in ("res_utf8", "res_empty"):
                         skip_count += 1
                     else:
                         success_count += 1
@@ -349,14 +527,13 @@ class ConverterController:
 # ============================================================
 
 class MainWindow:
-    """主窗口"""
+    """Main application window."""
 
     def __init__(self, root):
         self.root = root
-        self.root.title("文本格式批量转换器")
+        self.root.title(_("app_title"))
         self.root.geometry("600x520")
         self.root.resizable(True, True)
-        # 居中显示
         self._center_window(600, 520)
 
         self.log_queue = queue.Queue()
@@ -374,39 +551,38 @@ class MainWindow:
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
     def _build_ui(self):
-        # ---- 路径选择 ----
+        # ---- Path selection ----
         path_frame = ttk.Frame(self.root, padding=(10, 10, 10, 5))
         path_frame.pack(fill=tk.X)
 
-        ttk.Label(path_frame, text="处理路径:").pack(side=tk.LEFT)
+        ttk.Label(path_frame, text=_("path_label")).pack(side=tk.LEFT)
         self.path_var = tk.StringVar()
         path_entry = ttk.Entry(path_frame, textvariable=self.path_var)
         path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
-        ttk.Button(path_frame, text="浏览...", command=self._browse).pack(side=tk.LEFT)
+        ttk.Button(path_frame, text=_("browse"), command=self._browse).pack(side=tk.LEFT)
 
-        # ---- 后缀管理 ----
+        # ---- Extension management ----
         ext_frame = ttk.Frame(self.root, padding=(10, 5, 10, 5))
         ext_frame.pack(fill=tk.X)
 
-        ttk.Label(ext_frame, text="文件后缀:").pack(side=tk.LEFT)
+        ttk.Label(ext_frame, text=_("ext_label")).pack(side=tk.LEFT)
 
         self.ext_listbox = tk.Listbox(ext_frame, height=3, selectmode=tk.SINGLE)
         self.ext_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
 
-        # 默认后缀
         for ext in [".txt", ".md", ".py"]:
             self.ext_listbox.insert(tk.END, ext)
 
         ext_btn_frame = ttk.Frame(ext_frame)
         ext_btn_frame.pack(side=tk.LEFT, fill=tk.Y)
-        ttk.Button(ext_btn_frame, text="添加", command=self._add_ext).pack(fill=tk.X)
-        ttk.Button(ext_btn_frame, text="删除", command=self._remove_ext).pack(fill=tk.X)
+        ttk.Button(ext_btn_frame, text=_("add"), command=self._add_ext).pack(fill=tk.X)
+        ttk.Button(ext_btn_frame, text=_("remove"), command=self._remove_ext).pack(fill=tk.X)
 
-        # ---- 日志区域 ----
+        # ---- Log area ----
         log_frame = ttk.Frame(self.root, padding=(10, 5, 10, 5))
         log_frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(log_frame, text="处理日志:").pack(anchor=tk.W)
+        ttk.Label(log_frame, text=_("log_label")).pack(anchor=tk.W)
 
         log_container = ttk.Frame(log_frame)
         log_container.pack(fill=tk.BOTH, expand=True)
@@ -417,47 +593,47 @@ class MainWindow:
         self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # ---- 进度条 ----
+        # ---- Progress bar ----
         progress_frame = ttk.Frame(self.root, padding=(10, 5, 10, 5))
         progress_frame.pack(fill=tk.X)
 
         self.progress = ttk.Progressbar(progress_frame, mode="determinate")
         self.progress.pack(fill=tk.X)
 
-        self.progress_label = ttk.Label(progress_frame, text="就绪", foreground="gray")
+        self.progress_label = ttk.Label(progress_frame, text=_("ready"), foreground="gray")
         self.progress_label.pack(anchor=tk.W)
 
-        # ---- 控制按钮 ----
+        # ---- Control buttons ----
         btn_frame = ttk.Frame(self.root, padding=(10, 5, 10, 10))
         btn_frame.pack(fill=tk.X)
 
-        self.btn_convert = ttk.Button(btn_frame, text="转换", command=self._convert)
+        self.btn_convert = ttk.Button(btn_frame, text=_("convert"), command=self._convert)
         self.btn_convert.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.btn_pause = ttk.Button(btn_frame, text="暂停", command=self._pause, state=tk.DISABLED)
+        self.btn_pause = ttk.Button(btn_frame, text=_("pause"), command=self._pause, state=tk.DISABLED)
         self.btn_pause.pack(side=tk.LEFT, padx=(0, 5))
 
-        self.btn_stop = ttk.Button(btn_frame, text="停止", command=self._stop, state=tk.DISABLED)
+        self.btn_stop = ttk.Button(btn_frame, text=_("stop"), command=self._stop, state=tk.DISABLED)
         self.btn_stop.pack(side=tk.LEFT, padx=(0, 5))
 
         ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
 
-        self.btn_exit = ttk.Button(btn_frame, text="退出", command=self._exit)
+        self.btn_exit = ttk.Button(btn_frame, text=_("exit"), command=self._exit)
         self.btn_exit.pack(side=tk.RIGHT)
 
     def _browse(self):
-        directory = filedialog.askdirectory(title="选择处理路径")
+        directory = filedialog.askdirectory(title=_("select_path"))
         if directory:
             self.path_var.set(directory)
 
     def _add_ext(self):
         dialog = tk.Toplevel(self.root)
-        dialog.title("添加后缀")
+        dialog.title(_("add_ext_title"))
         dialog.geometry("300x100")
         dialog.transient(self.root)
         dialog.grab_set()
 
-        ttk.Label(dialog, text="输入后缀（如 .json）:").pack(pady=(10, 5))
+        ttk.Label(dialog, text=_("add_ext_label")).pack(pady=(10, 5))
         entry = ttk.Entry(dialog, width=30)
         entry.pack()
 
@@ -469,7 +645,7 @@ class MainWindow:
                 self.ext_listbox.insert(tk.END, val)
             dialog.destroy()
 
-        ttk.Button(dialog, text="确定", command=confirm).pack(pady=5)
+        ttk.Button(dialog, text=_("confirm"), command=confirm).pack(pady=5)
 
     def _remove_ext(self):
         sel = self.ext_listbox.curselection()
@@ -505,7 +681,7 @@ class MainWindow:
         self.root.after(100, self._start_queue_poller)
 
     def _handle_queue_msg(self, msg):
-        """处理来自工作线程的消息"""
+        """Handle messages from worker thread."""
         msg_type = msg[0]
         if msg_type == "info":
             self._log(msg[1], "info")
@@ -514,89 +690,78 @@ class MainWindow:
         elif msg_type == "error":
             self._log(msg[1], "error")
         elif msg_type == "done":
-            # (processed, success, fail, skip)
             processed = msg[1]
             success = msg[2]
             fail = msg[3]
             skip = msg[4] if len(msg) > 4 else 0
 
             self.progress["value"] = 100
-            self.progress_label["text"] = f"完成：处理 {processed} 个，成功 {success} 个"
-
+            status_text = _("log_done", processed=processed, success=success)
             if fail > 0:
-                self.progress_label["text"] += f"，失败 {fail} 个"
-
+                status_text += _("log_done_fail", fail=fail)
             if skip > 0:
-                self.progress_label["text"] += f"，跳过 {skip} 个"
+                status_text += _("log_done_skip", skip=skip)
+            self.progress_label["text"] = status_text
 
-            btn_state = tk.NORMAL if fail == 0 else tk.NORMAL
             self._set_buttons_idle()
 
-            # 弹出完成对话框
-            result_msg = (
-                f"处理完成！\n\n"
-                f"共处理: {processed} 个文件\n"
-                f"转换成功: {success} 个\n"
-                f"跳过（已是 UTF-8）: {skip} 个\n"
-                f"失败: {fail} 个"
-            )
+            result_msg = _("done_msg",
+                           processed=processed, success=success,
+                           skip=skip, fail=fail)
             if fail > 0:
-                messagebox.showwarning("处理完成（有失败）", result_msg)
+                messagebox.showwarning(_("done_title_warn"), result_msg)
             else:
-                messagebox.showinfo("处理完成", result_msg)
+                messagebox.showinfo(_("done_title"), result_msg)
 
     def _convert(self):
-        """点击转换按钮"""
+        """Convert button clicked."""
         directory = self.path_var.get().strip()
         if not directory or not os.path.isdir(directory):
-            messagebox.showerror("错误", "请选择有效的处理路径")
+            messagebox.showerror(_("error"), _("no_path"))
             return
 
         extensions = self._get_extensions()
         if not extensions:
-            messagebox.showerror("错误", "请至少添加一个文件后缀")
+            messagebox.showerror(_("error"), _("no_ext"))
             return
 
-        # 清空日志
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.delete(1.0, tk.END)
         self.log_text.configure(state=tk.DISABLED)
 
         self.progress["value"] = 0
-        self.progress_label["text"] = "正在扫描..."
+        self.progress_label["text"] = _("scanning")
 
         self._set_buttons_running()
         self.controller.start(directory, extensions)
 
     def _pause(self):
-        """点击暂停/恢复按钮"""
+        """Pause/Resume button clicked."""
         if self.controller.pause_event.is_set():
             self.controller.pause()
-            self.btn_pause["text"] = "恢复"
-            self._log("已暂停", "warn")
+            self.btn_pause["text"] = _("resume")
+            self._log(_("log_paused"), "warn")
         else:
             self.controller.resume()
-            self.btn_pause["text"] = "暂停"
-            self._log("已恢复", "info")
+            self.btn_pause["text"] = _("pause")
+            self._log(_("log_resuming"), "info")
 
     def _stop(self):
-        """点击停止按钮"""
-        self._log("正在停止...", "warn")
+        """Stop button clicked."""
+        self._log(_("log_stopping"), "warn")
         self.controller.stop()
 
     def _exit(self):
-        """退出程序"""
+        """Exit application."""
         if self.controller.is_running:
             result = messagebox.askyesno(
-                "确认退出",
-                "转换正在进行中，确定要退出吗？\n"
-                "未完成的文件将被停止。"
+                _("exit_confirm"),
+                _("exit_msg")
             )
             if not result:
                 return
-            # 清理工作线程
             self.controller.stop()
-            self._log("正在清理...", "warn")
+            self._log(_("log_cleaning"), "warn")
 
         self.root.destroy()
 
@@ -608,7 +773,7 @@ class MainWindow:
     def _set_buttons_idle(self):
         self.btn_convert["state"] = tk.NORMAL
         self.btn_pause["state"] = tk.DISABLED
-        self.btn_pause["text"] = "暂停"
+        self.btn_pause["text"] = _("pause")
         self.btn_stop["state"] = tk.DISABLED
 
 
