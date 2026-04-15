@@ -329,7 +329,7 @@ def convert_single_file(file_path, log_queue, stop_event, pause_event):
             log_queue.put(("info", _("log_empty", file=filename)))
             return file_path, True, "res_empty", {}
 
-        detected_encoding, _ = detect_encoding(file_path)
+        detected_encoding, raw_data = detect_encoding(file_path)
         log_queue.put(("info", _("log_detect", enc=detected_encoding)))
 
         text = None
