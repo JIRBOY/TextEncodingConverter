@@ -190,7 +190,6 @@ class I18n:
     def _detect_language():
         """Detect system language. Returns 'zh' for Chinese, 'en' for others."""
         try:
-            # Windows: locale.getdefaultlocale() returns ('zh_CN', 'cp1252') etc.
             lang_tag = locale.getdefaultlocale()[0] or ""
             lang_tag = lang_tag.lower()
         except Exception:
@@ -199,6 +198,10 @@ class I18n:
         if "zh" in lang_tag:
             return "zh"
         return "en"
+
+    def __call__(self, key, **kwargs):
+        """Allow using _() as a shorthand for _.t()."""
+        return self.t(key, **kwargs)
 
     def t(self, key, **kwargs):
         """Translate a key. Supports {placeholder} formatting."""
